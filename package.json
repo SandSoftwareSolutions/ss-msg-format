@@ -1,0 +1,44 @@
+{
+  "name": "@sandsoftwaresolutions/msg-format",
+  "version": "0.1.0",
+  "description": "ICU MessageFormat at runtime: plurals, select, ordinals, numbers, dates and tags in any language, with errors that say where.",
+  "type": "module",
+  "exports": {
+    ".": {
+      "types": "./src/index.d.ts",
+      "import": "./src/index.js"
+    }
+  },
+  "files": [
+    "src",
+    "README.md",
+    "LICENSE"
+  ],
+  "sideEffects": false,
+  "engines": {
+    "node": ">=18"
+  },
+  "scripts": {
+    "test": "node --test",
+    "pack:check": "npm pack --dry-run"
+  },
+  "keywords": [
+    "icu",
+    "messageformat",
+    "i18n",
+    "plural",
+    "translation"
+  ],
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/SandSoftwareSolutions/ss-msg-format.git"
+  },
+  "bugs": {
+    "url": "https://github.com/SandSoftwareSolutions/ss-msg-format/issues"
+  },
+  "homepage": "https://github.com/SandSoftwareSolutions/ss-msg-format#readme",
+  "publishConfig": {
+    "access": "public"
+  }
+}
