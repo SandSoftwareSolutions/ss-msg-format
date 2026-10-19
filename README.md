@@ -54,5 +54,9 @@ format("Read the <link>terms</link> and <b>accept</b>", {}, { tags: { link: (t) 
 - **Every `plural`, `selectordinal` and `select` needs an `other` branch**; a message without one is a syntax error.
 - **Errors say where**: `MessageSyntaxError` has `position` and shows the text around it, so a typo in a translation file is easy to find. Pair it with `i18n-check` in CI to find them before they ship.
 - **A missing value is an error** that names it (`the value for {name} is missing`), never a silent blank or `undefined`.
+- Values are read from the object's own properties only, and so are tag handlers (`<constructor>` is not a handler). A plural, `selectordinal` or `number` placeholder needs a number, a bigint or a text with a number in it: `null`, `""`, `true` and lists are errors instead of quietly becoming 0 or 1; a `date` needs a `Date`, a number or a non-empty text.
+- An unknown number, date or time style (`{n, number, bogus}`) is an error when the message is compiled. Messages nested more than 100 levels deep are a `MessageSyntaxError` instead of a stack overflow.
+- Dates and times are shown in the time zone of the process (set `TZ` to change it); there is no `timeZone` option. A `<` followed by a letter starts a tag, so write `'<'` for a literal one (`a<b` is a syntax error, `1 < 2` is fine).
+- Argument names are letters, digits and `_` only.
 - Values are read from the object's own properties only. `parse(message)` gives the syntax tree for tools; `required(message)` lists the values a message needs.
 - `format` caches compiled messages (up to 500); use `compile` for your own control.

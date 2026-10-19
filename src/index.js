@@ -8,6 +8,7 @@ export class MessageSyntaxError extends Error {
 }
 
 const NAME = /[A-Za-z0-9_]/;
+const MAX_DEPTH = 100; // nested {..{..}} and <b><b>: deeper than this is a mistake or an attack, and would overflow the stack
 
 /** Reads a message into a tree of nodes (text, arg, number, date, time, plural, select, pound, tag). Exposed for tools; most code only needs `format`. */
 export function parse(source) {
@@ -27,7 +28,17 @@ export function parse(source) {
     return source.slice(start, i);
   };
 
-  function nodes({ inPlural, closing }) {
+  let depth = 0;
+  function nodes(context) {
+    if (++depth > MAX_DEPTH) fail(`the message is nested more than ${MAX_DEPTH} levels deep`);
+    try {
+      return nodesAt(context);
+    } finally {
+      depth--;
+    }
+  }
+
+  function nodesAt({ inPlural, closing }) {
     const out = [];
     let text = "";
     let closed = false;
@@ -170,24 +181,41 @@ export function parse(source) {
 
 /** The names of the values a message needs (`["name", "count"]`), in order of appearance. For checking that you pass everything. */
 export function required(source) {
-  const names = [];
+  const names = new Set();
   const walk = (list) => {
     for (const node of list) {
-      if ("name" in node && node.type !== "tag" && !names.includes(node.name)) names.push(node.name);
+      if ("name" in node && node.type !== "tag") names.add(node.name);
       if (node.branches) node.branches.forEach((b) => walk(b.body));
       if (node.children) walk(node.children);
     }
   };
   walk(typeof source === "string" ? parse(source) : source);
-  return names;
+  return [...names];
 }
 
 const DATE_STYLES = ["short", "medium", "long", "full"];
 
 function toDate(value, name) {
-  const date = value instanceof Date ? value : new Date(value);
+  const usable = value instanceof Date || typeof value === "number" || (typeof value === "string" && value.trim() !== ""); // not null, true, [] ...
+  const date = usable ? (value instanceof Date ? value : new Date(value)) : new Date(NaN);
   if (Number.isNaN(date.getTime())) throw new TypeError(`msg-format: the value for {${name}} is not a valid date`);
   return date;
+}
+
+// A number, a bigint or a text with a number in it. Not null, "", true or [], which Number() would quietly turn into 0 or 1.
+function toNumber(value, name) {
+  const usable = typeof value === "number" || typeof value === "bigint" || (typeof value === "string" && value.trim() !== "");
+  const n = usable ? Number(value) : NaN;
+  if (Number.isNaN(n)) throw new TypeError(`msg-format: the value for {${name}} is not a number`);
+  return n;
+}
+
+function numberOptions(style) {
+  if (style === undefined || style === "") return {};
+  if (style === "integer") return { maximumFractionDigits: 0 };
+  if (style === "percent") return { style: "percent" };
+  if (style === "compact") return { notation: "compact" };
+  throw new RangeError(`msg-format: unknown number style "${style}" (use integer, percent or compact)`);
 }
 
 /**
@@ -196,12 +224,30 @@ function toDate(value, name) {
  * `{n, plural, =0 {none} one {# item} other {# items}}` (with `offset:`), `{n, selectordinal, ...}`, `{x, select, a {...} other {...}}`,
  * `#` for the number inside plural, `'{'` and `''` as quotes, and tags `<b>text</b>` that you handle with `tags`.
  * Plural rules come from the language (`locale`), so Polish and Arabic work. Missing values are an error that names them.
+ * An unknown number, date or time style is an error when the message is compiled, not when it is first used.
  */
-export function compile(source, { locale = "en", tags = {} } = {}) {
+export function compile(source, { locale = "en", tags } = {}) {
   const tree = parse(source);
+  const handlers = tags ?? {};
   const plurals = new Intl.PluralRules(locale);
   const ordinals = new Intl.PluralRules(locale, { type: "ordinal" });
   const numbers = new Intl.NumberFormat(locale);
+
+  // One formatter per placeholder, made now: it validates the style and saves building it on every call.
+  const formatters = new Map();
+  const prepare = (list) => {
+    for (const node of list) {
+      if (node.type === "number") formatters.set(node, new Intl.NumberFormat(locale, numberOptions(node.style)));
+      else if (node.type === "date" || node.type === "time") {
+        const style = node.style || "medium";
+        if (!DATE_STYLES.includes(style)) throw new RangeError(`msg-format: unknown ${node.type} style "${style}" (use ${DATE_STYLES.join(", ")})`);
+        formatters.set(node, new Intl.DateTimeFormat(locale, node.type === "date" ? { dateStyle: style } : { timeStyle: style }));
+      }
+      if (node.branches) node.branches.forEach((branch) => prepare(branch.body));
+      if (node.children) prepare(node.children);
+    }
+  };
+  prepare(tree);
 
   const run = (list, values, pound) =>
     list
@@ -213,24 +259,14 @@ export function compile(source, { locale = "en", tags = {} } = {}) {
             return numbers.format(pound);
           case "arg":
             return String(value(values, node.name));
-          case "number": {
-            const n = Number(value(values, node.name));
-            if (Number.isNaN(n)) throw new TypeError(`msg-format: the value for {${node.name}} is not a number`);
-            const style = node.style;
-            const options = style === undefined || style === "" ? {} : style === "integer" ? { maximumFractionDigits: 0 } : style === "percent" ? { style: "percent" } : style === "compact" ? { notation: "compact" } : null;
-            if (options === null) throw new RangeError(`msg-format: unknown number style "${style}" (use integer, percent or compact)`);
-            return new Intl.NumberFormat(locale, options).format(n);
-          }
+          case "number":
+            return formatters.get(node).format(toNumber(value(values, node.name), node.name));
           case "date":
-          case "time": {
-            const style = node.style || "medium";
-            if (!DATE_STYLES.includes(style)) throw new RangeError(`msg-format: unknown ${node.type} style "${style}" (use ${DATE_STYLES.join(", ")})`);
-            return new Intl.DateTimeFormat(locale, node.type === "date" ? { dateStyle: style } : { timeStyle: style }).format(toDate(value(values, node.name), node.name));
-          }
+          case "time":
+            return formatters.get(node).format(toDate(value(values, node.name), node.name));
           case "plural":
           case "selectordinal": {
-            const n = Number(value(values, node.name));
-            if (Number.isNaN(n)) throw new TypeError(`msg-format: the value for {${node.name}} is not a number`);
+            const n = toNumber(value(values, node.name), node.name);
             const shifted = n - node.offset;
             const exact = node.branches.find((b) => b.selector === `=${n}`);
             const category = (node.type === "plural" ? plurals : ordinals).select(shifted);
@@ -243,7 +279,7 @@ export function compile(source, { locale = "en", tags = {} } = {}) {
             return run(branch.body, values, pound);
           }
           case "tag": {
-            const handler = tags[node.name];
+            const handler = Object.hasOwn(handlers, node.name) ? handlers[node.name] : undefined; // not "constructor" or "toString"
             if (typeof handler !== "function") throw new Error(`msg-format: no handler for <${node.name}>; pass tags: { ${node.name}: (text) => ... }`);
             return String(handler(run(node.children, values, pound)));
           }

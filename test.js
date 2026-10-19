@@ -121,3 +121,51 @@ test("values cannot reach into the prototype", () => {
   assert.throws(() => format("{__proto__}", {}), /missing/);
   assert.equal(format("{__proto__}", JSON.parse('{"__proto__": "own"}')), "own");
 });
+
+test("tag handlers are looked up on the tags object itself, not on Object.prototype", () => {
+  assert.throws(() => format("<constructor>x</constructor>", {}), /no handler for <constructor>/);
+  assert.throws(() => format("<toString>x</toString>", {}, { tags: {} }), /no handler for <toString>/);
+  assert.throws(() => format("<hasOwnProperty>x</hasOwnProperty>", {}, { tags: {} }), /no handler/);
+  Object.prototype.polluted = (t) => `!${t}!`;
+  try {
+    assert.throws(() => format("<polluted>x</polluted>", {}, { tags: {} }), /no handler for <polluted>/);
+  } finally {
+    delete Object.prototype.polluted;
+  }
+  assert.equal(format("<b>x</b>", {}, { tags: { b: (t) => `[${t}]` } }), "[x]");
+  assert.equal(compile("<b>x</b>", { tags: Object.assign(Object.create(null), { b: (t) => t.toUpperCase() }) })(), "X");
+});
+
+test("deeply nested messages are a syntax error, not a stack overflow", () => {
+  for (const text of ["{a, select, other {".repeat(5000) + "x" + "}}".repeat(5000), "<b>".repeat(5000) + "x" + "</b>".repeat(5000)]) {
+    assert.throws(() => parse(text), (e) => e instanceof MessageSyntaxError && /nested more than \d+ levels/.test(e.message));
+  }
+  const fine = "{a, select, other {".repeat(50) + "x" + "}}".repeat(50);
+  assert.equal(format(fine, { a: "z" }), "x");
+});
+
+test("a plural, number or date does not quietly accept null, an empty text, a boolean or a list", () => {
+  for (const bad of [null, "", "  ", true, false, [], {}]) {
+    assert.throws(() => format("{n, plural, =0 {zero} other {other}}", { n: bad }), /not a number/, JSON.stringify(bad));
+    assert.throws(() => format("{n, number}", { n: bad }), /not a number/);
+    assert.throws(() => format("{n, selectordinal, other {#}}", { n: bad }), /not a number/);
+  }
+  for (const bad of [null, "", true, [], {}]) assert.throws(() => format("{d, date}", { d: bad }), /not a valid date/, JSON.stringify(bad));
+  assert.equal(format("{n, plural, =0 {zero} other {other}}", { n: "0" }), "zero");
+  assert.equal(format("{n, plural, =0 {zero} other {other}}", { n: 0n }), "zero");
+  assert.equal(format("{n, number}", { n: "1234.5" }), "1,234.5");
+  assert.ok(format("{d, date, short}", { d: 0 }).length > 0);
+});
+
+test("an unknown style is found when the message is compiled", () => {
+  assert.throws(() => compile("{n, number, bogus}"), /unknown number style "bogus"/);
+  assert.throws(() => compile("{d, date, tiny}"), /unknown date style/);
+  assert.throws(() => compile("{x, plural, other {{n, time, huge}}}"), /unknown time style/);
+});
+
+test("a message with very many values is compiled quickly", () => {
+  const text = Array.from({ length: 20_000 }, (_, i) => `{a${i}}`).join("");
+  const started = Date.now();
+  assert.equal(compile(text).required.length, 20_000);
+  assert.ok(Date.now() - started < 1500, `took ${Date.now() - started} ms`);
+});
