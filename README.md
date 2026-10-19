@@ -58,5 +58,5 @@ format("Read the <link>terms</link> and <b>accept</b>", {}, { tags: { link: (t) 
 - An unknown number, date or time style (`{n, number, bogus}`) is an error when the message is compiled. Messages nested more than 100 levels deep are a `MessageSyntaxError` instead of a stack overflow.
 - Dates and times are shown in the time zone of the process (set `TZ` to change it); there is no `timeZone` option. A `<` followed by a letter starts a tag, so write `'<'` for a literal one (`a<b` is a syntax error, `1 < 2` is fine).
 - Argument names are letters, digits and `_` only.
-- Values are read from the object's own properties only. `parse(message)` gives the syntax tree for tools; `required(message)` lists the values a message needs.
+- `parse(message)` gives the syntax tree for tools; `required(message)` lists the values a message needs.
 - `format` caches compiled messages (up to 500); use `compile` for your own control.
