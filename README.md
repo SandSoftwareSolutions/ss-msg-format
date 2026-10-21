@@ -10,6 +10,8 @@ Messages with `{name}`, plurals and selections that work in every language: the 
 npm install @sandsoftwaresolutions/msg-format
 ```
 
+Works with `import` and `require()`, and ships TypeScript types for both.
+
 ## Usage
 
 ```js
